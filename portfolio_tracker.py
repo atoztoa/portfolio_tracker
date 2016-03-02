@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 import codecs
 from termcolor import colored
 
-# CONSTANTS
+# ------- CONSTANTS --------- #
 KEYWORDS = {
             "TATA ELXSI" : "NSE:TATAELXSI",
             "TATA MOTORS(TELCO)" : "NSE:TATAMOTORS",
@@ -49,7 +49,8 @@ def process_html_file(filename):
         
     return entries
 
-
+""" Process transactions from Contract Notes
+"""
 def process_entries(entries):
     print "Processing transactions..."
 
@@ -252,7 +253,8 @@ def update_portfolio(data, portfolio):
 
             portfolio[MISC_KEY]["Total Value"] += float(item["Total"])
 
-
+""" Create and update the portfolio
+"""
 def generate_portfolio(transactions):
     print "Generating portfolio..."
 
@@ -265,23 +267,15 @@ def generate_portfolio(transactions):
   
     percentage = balance / total * 100
 
-    print portfolio
-
-    print
-    print
-
+    # Display results
     tabular(portfolio)
     
-    print
-    print
-
     print "=" * 40
     print " | TOTAL INVESTMENT : " + colored("{0:15}".format("Rs. {:,}".format(round(total, 2) if total >= 0 else - round(abs(total), 2))), 'white') + " |"
     print " | BROKER CHARGES   : " + colored("{0:15}".format("Rs. {:,}".format(portfolio[MISC_KEY]["Total Value"])), 'cyan') + " |"
     print " | BALANCE          : " + colored("{0:15}".format("Rs. {:,}".format(round(balance, 2) if balance >= 0 else - round(abs(balance), 2))), "red" if balance < 0 else "green") + " |"
     print " | PROFIT/LOSS %    : " + colored("{0:15}".format("{:,} %".format(round(percentage, 2) if percentage >= 0 else - round(abs(percentage), 2))), "red" if percentage < 0 else "green") + " |"
     print "=" * 40
-
 
 """ Report from portfolio
 """
@@ -319,9 +313,16 @@ def process_portfolio(portfolio):
 
     return (total, balance)
 
+""" Display the portfolio in tabular form
+"""
 def tabular(data):
     data_table = convert_to_table(data)
+    
+    print
+    print
     print_table(data_table)
+    print
+    print
 
 head = [ 
         'Scrip', 
@@ -333,6 +334,8 @@ head = [
         'Profit/Loss'
         ]
 
+""" Convert dictionary to two-dimentional list
+"""
 def convert_to_table(data):
     data_table = []
 
@@ -352,6 +355,8 @@ def convert_to_table(data):
 
     return data_table
 
+""" Print the two dimentional list as a table
+"""
 def print_table(data_table):
     for entry in data_table[0]:
         print "+ {0:-^20}".format(""),
@@ -376,12 +381,16 @@ def print_table(data_table):
                 print "| " + colored("{0:20}".format(entry), color),
 
         print "|"
+
         for entry in line:
             print "+ {0:-^20}".format(""),
+
         print "|"
 
         is_first = False
 
+""" Main
+"""
 if __name__ == '__main__':
     transactions = []
 
