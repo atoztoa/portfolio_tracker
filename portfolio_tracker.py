@@ -13,7 +13,8 @@ KEYWORDS = {
             "TATA CONSULTANCY SE": "NSE:TCS",
             "CIPLA": "NSE:CIPLA",
             "TATA IRON & STEEL CO": "NSE:TATASTEEL",
-            "KAMDHENU ISPAT LTD" : "NSE:KIL"
+            "KAMDHENU ISPAT LTD" : "NSE:KIL",
+            "JAMNA AUTO INDUSTRIE" : "NSE:JAMNAAUTO"
         }
 
 MISC_KEY = "--CHARGES--"
@@ -253,6 +254,11 @@ def update_portfolio(data, portfolio):
 
             portfolio[MISC_KEY]["Total Value"] += float(item["Total"])
 
+""" Round float value to 2 decimal
+"""
+def round_float(value):
+    return round(value, 2) if value >= 0 else - round(abs(value), 2)
+
 """ Create and update the portfolio
 """
 def generate_portfolio(transactions):
@@ -270,12 +276,11 @@ def generate_portfolio(transactions):
     # Display results
     tabular(portfolio)
     
-    print "=" * 40
-    print " | TOTAL INVESTMENT : " + colored("{0:15}".format("Rs. {:,}".format(round(total, 2) if total >= 0 else - round(abs(total), 2))), 'white') + " |"
-    print " | BROKER CHARGES   : " + colored("{0:15}".format("Rs. {:,}".format(portfolio[MISC_KEY]["Total Value"])), 'cyan') + " |"
-    print " | BALANCE          : " + colored("{0:15}".format("Rs. {:,}".format(round(balance, 2) if balance >= 0 else - round(abs(balance), 2))), "red" if balance < 0 else "green") + " |"
-    print " | PROFIT/LOSS %    : " + colored("{0:15}".format("{:,} %".format(round(percentage, 2) if percentage >= 0 else - round(abs(percentage), 2))), "red" if percentage < 0 else "green") + " |"
-    print "=" * 40
+    print "=" * 50
+    print " | TOTAL INVESTMENT : " + colored("{0:25}".format("Rs. {:,}".format(round_float(total))), 'white') + " |"
+    print " | BROKER CHARGES   : " + colored("{0:25}".format("Rs. {:,}".format(portfolio[MISC_KEY]["Total Value"])), 'cyan') + " |"
+    print " | PROFIT/LOSS      : " + colored("{0:25}".format("Rs. {:,} ( {}% )".format(round_float(balance), round_float(percentage))), "red" if balance < 0 else "green") + " |"
+    print "=" * 50
 
 """ Report from portfolio
 """
