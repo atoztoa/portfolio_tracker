@@ -13,7 +13,7 @@ KEYWORDS = {
             "TATA CONSULTANCY SE": "NSE:TCS",
             "CIPLA": "NSE:CIPLA",
             "TATA IRON & STEEL CO": "NSE:TATASTEEL",
-            "KAMDHENU ISPAT LTD" : "NSE:KIL",
+            "KAMDHENU ISPAT LTD" : "NSE:KAMDHENU",
             "JAMNA AUTO INDUSTRIE" : "NSE:JAMNAAUTO"
         }
 
@@ -47,7 +47,7 @@ def process_html_file(filename):
         # Ignore rest of the entries
         if "NET AMOUNT DUE" in "".join(entry):
             break
-        
+
     return entries
 
 """ Process transactions from Contract Notes
@@ -58,7 +58,7 @@ def process_entries(entries):
     is_data = False
     is_scrip = False
     is_misc = False
-    is_new = False
+    is_new_html_format = False
     item = {}
     items = []
     misc = {}
@@ -67,13 +67,13 @@ def process_entries(entries):
     entries = [entry for entry in entries if "".join(entry).strip()]
 
     # New format?
-    head = entries[0] 
+    head = entries[0]
     if len(head) == 13:
-        is_new = True
+        is_new_html_format = True
 
     for entry in entries:
         scrap_entries = [ 'ISIN', 'BUY AVERAGE', 'SELL AVERAGE', 'NET AVERAGE', 'Delivery Total' ]
-        
+
         if any(item in "".join(entry) for item in scrap_entries):
             continue
 
@@ -90,12 +90,12 @@ def process_entries(entries):
 
                 item = {}
 
-                if is_new:
+                if is_new_html_format:
                     item.update(dict(zip(COLUMNS_NEW, entry)))
                 else:
                     item.update(dict(zip(COLUMNS, entry)))
 
-                if is_new:
+                if is_new_html_format:
                     item['Type'] = "SELL" if item['Buy/Sell'] == 'S' else "BUY"
                 else:
                     if 'Sold Qty' in item and item['Sold Qty']:
@@ -105,42 +105,50 @@ def process_entries(entries):
                         item['Type'] = "BUY"
                         item['Quantity'] = item.pop("Bought Qty")
 
+                # Total is always positive value
+                if(float(item['Total']) < 0):
+                    item['Total'] = str(abs(float(item['Total'])))
+
                 scrap_keys = COLUMNS[:4]
 
-                if is_new:
+                if is_new_html_format:
                     scrap_keys += [ 'Buy/Sell', 'Remarks' ]
 
                 item = { key:value for key,value in item.items() if not any(k in key for k in scrap_keys) and value }
             else:
                 # Multiple entries
                 if entry[0] and entry[0].isdigit():
-                    next_item = dict(zip(COLUMNS_NEW, entry))    
-                
-                    if is_new:
+                    next_item = dict(zip(COLUMNS_NEW, entry))
+
+                    if is_new_html_format:
                         next_item['Type'] = "SELL" if next_item['Buy/Sell'] == 'S' else "BUY"
                     else:
                         if 'Sold Qty' in next_item:
                             next_item['Type'] = "SELL"
                             next_item['Quantity'] = next_item.pop("Sold Qty")
-                        
+
                         if 'Bought Qty' in next_item:
                             next_item['Type'] = "BUY"
                             next_item['Quantity'] = next_item.pop("Bought Qty")
-                
+
+                    # Total is always positive value
+                    if(float(next_item['Total']) < 0):
+                        next_item['Total'] = str(abs(float(next_item['Total'])))
+
                     scrap_keys = COLUMNS[:4]
 
-                    if is_new:
+                    if is_new_html_format:
                         scrap_keys += [ 'Buy/Sell', 'Remarks' ]
 
                     next_item = { key:value for key,value in next_item.items() if not any(k in key for k in scrap_keys) and value }
 
                     if "Trades" not in item:
                         item = {"Trades": [ item ]}
-                    
+
                     item["Trades"].append(next_item)
                     continue
 
-                col = 11 if is_new else 12
+                col = 11 if is_new_html_format else 12
 
                 if entry[col]:
                     item[entry[4].strip("*").strip()] = entry[col]
@@ -154,11 +162,11 @@ def process_entries(entries):
                     scrap_keys = COLUMNS[:4]
                     scrap_keys += [ 'STT SELL DELIVERY', 'STT BUY DELIVERY' ]
 
-                    if is_new:
+                    if is_new_html_format:
                         scrap_keys += [ 'Buy/Sell', 'Remarks' ]
 
                     item = { key:value for key,value in item.items() if not any(k in key for k in scrap_keys) and value }
-                  
+
                     if "TOTAL STT" in item:
                         item['STT'] = item.pop("TOTAL STT")
 
@@ -171,22 +179,20 @@ def process_entries(entries):
                 is_misc = True
 
         if is_misc:
-            col = 11 if is_new else 13
-            if not entry[col - 1] or is_new:
+            col = 11 if is_new_html_format else 13
+            if not entry[col - 1] or is_new_html_format:
                 misc[entry[4].strip("*").strip("[]").strip("~").strip()] = entry[col]
-               
+
         # Ignore rest of the entries
         if "NET AMOUNT DUE" in "".join(entry):
             break
 
     scrap_keys = [ 'NET AMOUNT DUE TO', 'DR. TOTAL', 'CR. TOTAL' ]
 
+    # Misc Charges
     misc = {key:value for key,value in misc.items() if not any(k in key for k in scrap_keys)}
-
     misc['Total'] = sum(float(item) for key,item in misc.items())
-
     misc['Type'] = "MISC"
-
     items.append(misc)
 
     return items
@@ -197,7 +203,7 @@ def get_quote(symbol):
     print "Getting market price: " + symbol
 
     base_url = 'http://finance.google.com/finance?q='
-   
+
     symbol = KEYWORDS[symbol]
 
     try:
@@ -212,7 +218,7 @@ def get_quote(symbol):
     try:
         price = soup.find_all("span", id=re.compile('^ref_.*_l$'))[0].string
         price = str(unicode(price).encode('ascii', 'ignore')).strip().replace(",", "")
-    
+
         return price
     except Exception as e:
         print "Can't get current rate for scrip: " + symbol
@@ -270,12 +276,12 @@ def generate_portfolio(transactions):
         update_portfolio(data, portfolio)
 
     total, balance = process_portfolio(portfolio)
-  
+
     percentage = balance / total * 100
 
     # Display results
     tabular(portfolio)
-    
+
     print "=" * 50
     print " | TOTAL INVESTMENT : " + colored("{0:25}".format("Rs. {:,}".format(round_float(total))), 'white') + " |"
     print " | BROKER CHARGES   : " + colored("{0:25}".format("Rs. {:,}".format(portfolio[MISC_KEY]["Total Value"])), 'cyan') + " |"
@@ -322,15 +328,15 @@ def process_portfolio(portfolio):
 """
 def tabular(data):
     data_table = convert_to_table(data)
-    
+
     print
     print
     print_table(data_table)
     print
     print
 
-head = [ 
-        'Scrip', 
+head = [
+        'Scrip',
         'Total Quantity',
         'Total Value',
         'Average Rate',
@@ -366,7 +372,7 @@ def print_table(data_table):
     for entry in data_table[0]:
         print "+ {0:-^20}".format(""),
     print "+"
-    
+
     is_first = True
 
     for line in data_table:
@@ -376,14 +382,17 @@ def print_table(data_table):
                 print "| {0:^20}".format(entry),
             else:
                 if head[i] == "Profit/Loss":
-                    if entry < 0:
+                    if float(entry) < 0:
                         color = 'red'
                     else:
                         color = 'green'
                 else:
                     color = 'white'
 
-                print "| " + colored("{0:20}".format(entry), color),
+                if head[i] == "Scrip":
+                    print "| " + colored("{0:20}".format(entry), color),
+                else:
+                    print "| " + colored("{0:>20}".format('{0:.2f}'.format(entry)), color),
 
         print "|"
 
