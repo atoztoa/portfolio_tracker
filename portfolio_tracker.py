@@ -22,6 +22,9 @@ MISC_KEY = "--CHARGES--"
 COLUMNS = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Bought Qty', 'Sold Qty', 'Gross Rate', 'Gross Total', 'Brokerage', 'Net Rate', 'Service Tax', 'STT', 'Total']
 COLUMNS_NEW = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Buy/Sell', 'Quantity', 'Gross Rate', 'Brokerage', 'Net Rate', 'Closing Rate', 'Total', 'Remarks']
 
+BROKERAGE_RATE = 0.004
+EXIT_LOAD_RATE = 0.005
+
 """ Get transaction data from HTML file
 """
 def process_html_file(filename):
@@ -275,18 +278,22 @@ def generate_portfolio(transactions):
     for data in transactions:
         update_portfolio(data, portfolio)
 
-    total, balance = process_portfolio(portfolio)
+    report = process_portfolio(portfolio)
 
-    percentage = balance / total * 100
+    percentage = report['balance'] / report['total'] * 100
 
     # Display results
     tabular(portfolio)
 
     print "=" * 50
-    print " | TOTAL INVESTMENT : " + colored("{0:25}".format("Rs. {:,}".format(round_float(total))), 'white') + " |"
-    print " | BROKER CHARGES   : " + colored("{0:25}".format("Rs. {:,}".format(portfolio[MISC_KEY]["Total Value"])), 'cyan') + " |"
-    print " | PROFIT/LOSS      : " + colored("{0:25}".format("Rs. {:,} ( {}% )".format(round_float(balance), round_float(percentage))), "red" if balance < 0 else "green") + " |"
+    print " | TOTAL INVESTMENT : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['total'])), 'white') + " |"
+    print " | CURRENT VALUE    : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['current_value'])), 'yellow') + " |"
+    print " | ENTRY LOAD       : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['entry_load'])), 'cyan') + " |"
+    print " | EXIT LOAD        : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['exit_load'])), 'cyan') + " |"
+    print " | PROFIT/LOSS      : " + colored("{0:25}".format("Rs. {:,.2f} ( {:.2f}% )".format(report['balance'], percentage)), "red" if report['balance'] < 0 else "green") + " |"
     print "=" * 50
+
+# FIXME : Brokerage is wrong
 
 """ Report from portfolio
 """
@@ -295,6 +302,7 @@ def process_portfolio(portfolio):
 
     balance = 0
     total = 0
+    current_value = 0
 
     # Final
     for key, value in portfolio.items():
@@ -310,19 +318,31 @@ def process_portfolio(portfolio):
             portfolio[key]["Market Rate"] = float(get_quote(key))
             portfolio[key]["Current Value"] = portfolio[key]["Total Quantity"] * portfolio[key]["Market Rate"]
             portfolio[key]["Profit/Loss"] = portfolio[key]["Current Value"] - portfolio[key]["Total Value"]
+            portfolio[key]["ROI"] = portfolio[key]["Profit/Loss"] / portfolio[key]["Total Value"] * 100
 
             balance += portfolio[key]["Profit/Loss"]
             total += portfolio[key]["Total Value"]
+            current_value += portfolio[key]["Current Value"]
 
+            '''
             for k,v in portfolio[key].items():
                 if v >= 0:
                     portfolio[key][k] = round(v, 2)
                 else:
                     portfolio[key][k] = - round(abs(v), 2)
+            '''
 
+    entry_load = portfolio[MISC_KEY]["Total Value"] + (total * BROKERAGE_RATE)
+    exit_load = current_value * EXIT_LOAD_RATE
+    balance -= exit_load
 
-
-    return (total, balance)
+    return {
+                "total": total,
+                "current_value": current_value,
+                "entry_load": entry_load,
+                "exit_load": exit_load,
+                "balance": balance
+            }
 
 """ Display the portfolio in tabular form
 """
@@ -342,7 +362,8 @@ head = [
         'Average Rate',
         'Market Rate',
         'Current Value',
-        'Profit/Loss'
+        'Profit/Loss',
+        'ROI'
         ]
 
 """ Convert dictionary to two-dimentional list
@@ -381,8 +402,8 @@ def print_table(data_table):
             if is_first:
                 print "| {0:^20}".format(entry),
             else:
-                if head[i] == "Profit/Loss":
-                    if float(entry) < 0:
+                if head[i] == "Profit/Loss" or head[i] == "ROI":
+                    if entry < 0:
                         color = 'red'
                     else:
                         color = 'green'
@@ -392,7 +413,10 @@ def print_table(data_table):
                 if head[i] == "Scrip":
                     print "| " + colored("{0:20}".format(entry), color),
                 else:
-                    print "| " + colored("{0:>20}".format('{0:.2f}'.format(entry)), color),
+                    if head[i] == "ROI":
+                        print "| " + colored("{0:>20}".format('{0:.2f}%'.format(entry)), color),
+                    else:
+                        print "| " + colored("{0:>20}".format('{0:.2f}'.format(entry)), color),
 
         print "|"
 
@@ -411,6 +435,7 @@ if __name__ == '__main__':
     # Parse HTML files
     for filename in glob.glob('*.htm'):
         data = process_entries(process_html_file(filename))
+
         transactions.append(data)
 
     generate_portfolio(transactions)
