@@ -14,7 +14,9 @@ KEYWORDS = {
             "CIPLA": "NSE:CIPLA",
             "TATA IRON & STEEL CO": "NSE:TATASTEEL",
             "KAMDHENU ISPAT LTD" : "NSE:KAMDHENU",
-            "JAMNA AUTO INDUSTRIE" : "NSE:JAMNAAUTO"
+            "JAMNA AUTO INDUSTRIE" : "NSE:JAMNAAUTO",
+            "IDBI BANK LIMITED" : "NSE:IDBI",
+            "TATA METALIKS" : "NSE:TATAMETALI",
         }
 
 MISC_KEY = "--CHARGES--"
@@ -207,6 +209,9 @@ def get_quote(symbol):
 
     base_url = 'http://finance.google.com/finance?q='
 
+    if symbol not in KEYWORDS:
+        return 0.0
+
     symbol = KEYWORDS[symbol]
 
     try:
@@ -254,7 +259,6 @@ def update_portfolio(data, portfolio):
                 portfolio[scrip]["Total Quantity"] -= float(item["Quantity"])
                 portfolio[scrip]["Total Value"] -= float(item["Total"])
 
-            portfolio[scrip]["Average Rate"] = portfolio[scrip]["Total Value"] / portfolio[scrip]["Total Quantity"]
         else:
             if MISC_KEY not in portfolio:
                 portfolio[MISC_KEY] = {
@@ -262,11 +266,6 @@ def update_portfolio(data, portfolio):
                         }
 
             portfolio[MISC_KEY]["Total Value"] += float(item["Total"])
-
-""" Round float value to 2 decimal
-"""
-def round_float(value):
-    return round(value, 2) if value >= 0 else - round(abs(value), 2)
 
 """ Create and update the portfolio
 """
@@ -293,8 +292,6 @@ def generate_portfolio(transactions):
     print " | PROFIT/LOSS      : " + colored("{0:25}".format("Rs. {:,.2f} ( {:.2f}% )".format(report['balance'], percentage)), "red" if report['balance'] < 0 else "green") + " |"
     print "=" * 50
 
-# FIXME : Brokerage is wrong
-
 """ Report from portfolio
 """
 def process_portfolio(portfolio):
@@ -319,18 +316,16 @@ def process_portfolio(portfolio):
             portfolio[key]["Current Value"] = portfolio[key]["Total Quantity"] * portfolio[key]["Market Rate"]
             portfolio[key]["Profit/Loss"] = portfolio[key]["Current Value"] - portfolio[key]["Total Value"]
             portfolio[key]["ROI"] = portfolio[key]["Profit/Loss"] / portfolio[key]["Total Value"] * 100
-
+            
             balance += portfolio[key]["Profit/Loss"]
             total += portfolio[key]["Total Value"]
             current_value += portfolio[key]["Current Value"]
 
-            '''
-            for k,v in portfolio[key].items():
-                if v >= 0:
-                    portfolio[key][k] = round(v, 2)
-                else:
-                    portfolio[key][k] = - round(abs(v), 2)
-            '''
+            # If no balance, delete the entry as totals have been updated
+            if portfolio[key]["Total Quantity"] == 0:
+                del portfolio[key]
+            else:
+                portfolio[key]["Average Rate"] = portfolio[key]["Total Value"] / portfolio[key]["Total Quantity"]
 
     entry_load = portfolio[MISC_KEY]["Total Value"] + (total * BROKERAGE_RATE)
     exit_load = current_value * EXIT_LOAD_RATE
@@ -392,6 +387,7 @@ def convert_to_table(data):
 def print_table(data_table):
     for entry in data_table[0]:
         print "+ {0:-^20}".format(""),
+
     print "+"
 
     is_first = True
@@ -423,7 +419,7 @@ def print_table(data_table):
         for entry in line:
             print "+ {0:-^20}".format(""),
 
-        print "|"
+        print "+"
 
         is_first = False
 
