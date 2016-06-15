@@ -17,6 +17,8 @@ KEYWORDS = {
             "JAMNA AUTO INDUSTRIE" : "NSE:JAMNAAUTO",
             "IDBI BANK LIMITED" : "NSE:IDBI",
             "TATA METALIKS" : "NSE:TATAMETALI",
+            "KALYANI STEELS LTD": "NSE:KSL",
+            "TV TODAY NETWORK LTD": "NSE:TVTODAY",
         }
 
 MISC_KEY = "--CHARGES--"
@@ -25,7 +27,7 @@ COLUMNS = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Bou
 COLUMNS_NEW = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Buy/Sell', 'Quantity', 'Gross Rate', 'Brokerage', 'Net Rate', 'Closing Rate', 'Total', 'Remarks']
 
 BROKERAGE_RATE = 0.004
-EXIT_LOAD_RATE = 0.005
+EXIT_LOAD_RATE = 0.004
 
 """ Get transaction data from HTML file
 """
@@ -210,6 +212,7 @@ def get_quote(symbol):
     base_url = 'http://finance.google.com/finance?q='
 
     if symbol not in KEYWORDS:
+        print "Scrip information not available!"
         return 0.0
 
     symbol = KEYWORDS[symbol]
@@ -232,10 +235,100 @@ def get_quote(symbol):
         print "Can't get current rate for scrip: " + symbol
         return 0.0
 
-""" Update portfolio with new data
+""" Compile trades
 """
-def update_portfolio(data, portfolio):
+def compile_trades(data, trades):
+    print "Updating trades..."
+
+    for item in data:
+        if "Trades" in item:
+            compile_trades(item["Trades"], trades)
+            continue
+
+        if item["Type"] in ["BUY", "SELL"]:
+            scrip = item["Security"]
+
+            if scrip not in trades:
+                trades[scrip] = {
+                            "Buy": [],
+                            "Sell": []
+                        }
+
+            if item["Type"] == "BUY":
+                trades[scrip]["Buy"].append((float(item["Quantity"]), float(item["Total"])))
+            else:
+                trades[scrip]["Sell"].append((float(item["Quantity"]), float(item["Total"])))
+
+        else:
+            if MISC_KEY not in trades:
+                trades[MISC_KEY] = {
+                            "Total Value": 0
+                        }
+
+            trades[MISC_KEY]["Total Value"] += float(item["Total"])
+
+""" Process Trades
+"""
+def process_trades(trades):
+    for key in dict(trades):
+        if key == MISC_KEY:
+            continue
+
+        trades[key].update({
+                "Total Buy": 0,
+                "Total Sell": 0,
+                "Total Buy Value": 0,
+                "Total Sell Value": 0,
+                "Buy Rate": 0,
+                "Sell Rate": 0
+            })
+
+        for trade in trades[key]["Buy"]:
+            trades[key]["Total Buy"] += trade[0]
+            trades[key]["Total Buy Value"] += trade[1]
+            trades[key]["Buy Rate"] = trades[key]["Total Buy Value"] / trades[key]["Total Buy"]
+
+        del(trades[key]["Buy"])
+
+        for trade in trades[key]["Sell"]:
+            trades[key]["Total Sell"] += trade[0]
+            trades[key]["Total Sell Value"] += trade[1]
+            trades[key]["Sell Rate"] = trades[key]["Total Sell Value"] / trades[key]["Total Sell"]
+
+        del(trades[key]["Sell"])
+
+        # If old trades, ignore
+        if trades[key]["Total Buy"] == 0:
+            del trades[key]
+            continue
+
+        trades[key]["Balance"] = trades[key]["Total Buy"] - trades[key]["Total Sell"]
+
+        if trades[key]["Balance"] < 0:
+            # Missing BUY items, only calculate for accounted trades
+            trades[key]["Cleared"] = trades[key]["Sell Rate"] * trades[key]["Total Buy"] - trades[key]["Buy Rate"] * trades[key]["Total Buy"]
+        elif trades[key]["Balance"] == 0:
+            trades[key]["Cleared"] = trades[key]["Sell Rate"] * trades[key]["Total Sell"] - trades[key]["Buy Rate"] * trades[key]["Total Buy"]
+        else:
+            # Only calculate for sold quantity
+            trades[key]["Cleared"] = trades[key]["Sell Rate"] * trades[key]["Total Sell"] - trades[key]["Buy Rate"] * trades[key]["Total Sell"]
+
+""" Update portfolio with trades
+"""
+def update_portfolio(trades, portfolio):
     print "Updating portfolio..."
+
+    for scrip in trades:
+        if scrip == MISC_KEY:
+            continue
+
+        portfolio[scrip] = {
+                    "Total Quantity": trades[scrip]["Balance"],
+                    "Total Value": trades[scrip]["Buy Rate"] * trades[scrip]["Balance"],
+                    "Average Rate": trades[scrip]["Buy Rate"],
+                    "Cleared": trades[scrip]["Cleared"]
+                }
+    """
 
     for item in data:
         if "Trades" in item:
@@ -264,18 +357,31 @@ def update_portfolio(data, portfolio):
                 portfolio[MISC_KEY] = {
                             "Total Value": 0
                         }
+    """
 
-            portfolio[MISC_KEY]["Total Value"] += float(item["Total"])
+    portfolio[MISC_KEY] = {
+                "Total Value": 0
+            }
+    portfolio[MISC_KEY]["Total Value"] += trades[MISC_KEY]["Total Value"]
 
 """ Create and update the portfolio
 """
 def generate_portfolio(transactions):
     print "Generating portfolio..."
 
-    portfolio = {}
+    trades = {}
 
     for data in transactions:
-        update_portfolio(data, portfolio)
+        compile_trades(data, trades)
+
+    process_trades(trades)
+
+    #system
+
+    portfolio = {}
+
+    #for data in transactions:
+    update_portfolio(trades, portfolio)
 
     report = process_portfolio(portfolio)
 
@@ -290,6 +396,7 @@ def generate_portfolio(transactions):
     print " | ENTRY LOAD       : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['entry_load'])), 'cyan') + " |"
     print " | EXIT LOAD        : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['exit_load'])), 'cyan') + " |"
     print " | PROFIT/LOSS      : " + colored("{0:25}".format("Rs. {:,.2f} ( {:.2f}% )".format(report['balance'], percentage)), "red" if report['balance'] < 0 else "green") + " |"
+    print " | CLEARED          : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['cleared'])), "red" if report['cleared'] < 0 else "green") + " |"
     print "=" * 50
 
 """ Report from portfolio
@@ -300,32 +407,32 @@ def process_portfolio(portfolio):
     balance = 0
     total = 0
     current_value = 0
+    cleared = 0
 
     # Final
-    for key, value in portfolio.items():
+    for key in dict(portfolio):
         # Misc
         if key == MISC_KEY:
             balance -= portfolio[key]["Total Value"]
             portfolio[key]["Total Value"] = round(portfolio[key]["Total Value"], 2)
         else:
-            if portfolio[key]["Total Quantity"] < 0:
-                del portfolio[key]
-                continue
-
             portfolio[key]["Market Rate"] = float(get_quote(key))
-            portfolio[key]["Current Value"] = portfolio[key]["Total Quantity"] * portfolio[key]["Market Rate"]
-            portfolio[key]["Profit/Loss"] = portfolio[key]["Current Value"] - portfolio[key]["Total Value"]
-            portfolio[key]["ROI"] = portfolio[key]["Profit/Loss"] / portfolio[key]["Total Value"] * 100
-            
+
+            if portfolio[key]["Total Value"] > 0:
+                portfolio[key]["Current Value"] = portfolio[key]["Total Quantity"] * portfolio[key]["Market Rate"]
+                portfolio[key]["Profit/Loss"] = portfolio[key]["Current Value"] - portfolio[key]["Total Value"]
+                portfolio[key]["ROI"] = portfolio[key]["Profit/Loss"] / portfolio[key]["Total Value"] * 100
+                portfolio[key]["Average Rate"] = portfolio[key]["Total Value"] / portfolio[key]["Total Quantity"]
+            else:
+                portfolio[key]["Current Value"] = 0
+                portfolio[key]["Profit/Loss"] = 0
+                portfolio[key]["ROI"] = 0
+                portfolio[key]["Average Rate"] = 0
+
             balance += portfolio[key]["Profit/Loss"]
             total += portfolio[key]["Total Value"]
             current_value += portfolio[key]["Current Value"]
-
-            # If no balance, delete the entry as totals have been updated
-            if portfolio[key]["Total Quantity"] == 0:
-                del portfolio[key]
-            else:
-                portfolio[key]["Average Rate"] = portfolio[key]["Total Value"] / portfolio[key]["Total Quantity"]
+            cleared += portfolio[key]["Cleared"]
 
     entry_load = portfolio[MISC_KEY]["Total Value"] + (total * BROKERAGE_RATE)
     exit_load = current_value * EXIT_LOAD_RATE
@@ -336,7 +443,8 @@ def process_portfolio(portfolio):
                 "current_value": current_value,
                 "entry_load": entry_load,
                 "exit_load": exit_load,
-                "balance": balance
+                "balance": balance,
+                "cleared": cleared
             }
 
 """ Display the portfolio in tabular form
@@ -358,7 +466,8 @@ head = [
         'Market Rate',
         'Current Value',
         'Profit/Loss',
-        'ROI'
+        'ROI',
+        'Cleared'
         ]
 
 """ Convert dictionary to two-dimentional list
@@ -398,21 +507,27 @@ def print_table(data_table):
             if is_first:
                 print "| {0:^20}".format(entry),
             else:
-                if head[i] == "Profit/Loss" or head[i] == "ROI":
-                    if entry < 0:
-                        color = 'red'
+                if entry == 0:
+                    if head[i] == 'Market Rate':
+                        print "| " + colored("{0:^20}".format("_INVALID_"), 'red'),
                     else:
-                        color = 'green'
+                        print "| " + colored("{0:^20}".format("_._"), 'grey'),
                 else:
-                    color = 'white'
+                    if head[i] == "Profit/Loss" or head[i] == "ROI" or head[i] == "Cleared":
+                        if entry < 0:
+                            color = 'red'
+                        else:
+                            color = 'green'
+                    else:
+                        color = 'white'
 
-                if head[i] == "Scrip":
-                    print "| " + colored("{0:20}".format(entry), color),
-                else:
-                    if head[i] == "ROI":
-                        print "| " + colored("{0:>20}".format('{0:.2f}%'.format(entry)), color),
+                    if head[i] == "Scrip":
+                        print "| " + colored("{0:20}".format(entry), color),
                     else:
-                        print "| " + colored("{0:>20}".format('{0:.2f}'.format(entry)), color),
+                        if head[i] == "ROI":
+                            print "| " + colored("{0:>20}".format('{0:.2f}%'.format(entry)), color),
+                        else:
+                            print "| " + colored("{0:>20}".format('{0:.2f}'.format(entry)), color),
 
         print "|"
 
