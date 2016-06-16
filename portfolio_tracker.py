@@ -1,7 +1,10 @@
+# -*- coding: utf-8 -*-
+
 import json
 import glob
 import urllib2
 import re
+import datetime
 from bs4 import BeautifulSoup
 import codecs
 from termcolor import colored
@@ -23,19 +26,54 @@ KEYWORDS = {
 
 MISC_KEY = "--CHARGES--"
 
-COLUMNS = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Bought Qty', 'Sold Qty', 'Gross Rate', 'Gross Total', 'Brokerage', 'Net Rate', 'Service Tax', 'STT', 'Total']
-COLUMNS_NEW = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Buy/Sell', 'Quantity', 'Gross Rate', 'Brokerage', 'Net Rate', 'Closing Rate', 'Total', 'Remarks']
+COLUMNS = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Bought Qty', 'Sold Qty', 'Gross Rate', 'Gross Total', 'Brokerage', 'Net Rate', 'Service Tax', 'STT', 'Total', 'Trade Date']
+COLUMNS_NEW = ['Order No', 'Order Time', 'Trade No.', 'Trade Time', 'Security', 'Buy/Sell', 'Quantity', 'Gross Rate', 'Brokerage', 'Net Rate', 'Closing Rate', 'Total', 'Remarks', 'Trade Date']
 
 BROKERAGE_RATE = 0.004
 EXIT_LOAD_RATE = 0.004
 
-""" Get transaction data from HTML file
+BACKLOG = -20000.00
+
+""" Get current market price
 """
-def process_html_file(filename):
+def get_market_price(symbol):
+    print "Getting market price: " + symbol
+
+    base_url = 'http://finance.google.com/finance?q='
+
+    if symbol not in KEYWORDS:
+        print "Scrip information not available!"
+        return 0.0
+
+    symbol = KEYWORDS[symbol]
+
+    try:
+        response = urllib2.urlopen(base_url + symbol)
+        html = response.read()
+    except Exception, msg:
+        print msg
+        return 0.0
+
+    soup = BeautifulSoup(html)
+
+    try:
+        price = soup.find_all("span", id=re.compile('^ref_.*_l$'))[0].string
+        price = str(unicode(price).encode('ascii', 'ignore')).strip().replace(",", "")
+
+        return price
+    except Exception as e:
+        print "Can't get current rate for scrip: " + symbol
+        return 0.0
+
+""" Get transaction data from Contract Note file
+"""
+def parse_cn_file(filename):
     print "Processing file: " + filename + "..."
     html = open(filename).read()
 
     soup = BeautifulSoup(html)
+
+    trade_date = soup.find('td', text = re.compile('TRADE DATE(.*)', re.DOTALL)).parent.findAll('td')[1].text
 
     table = soup.find("td", class_="xl27boTBL").findParents("table")[0]
 
@@ -44,11 +82,15 @@ def process_html_file(filename):
     for row in table.findAll("tr"):
         entry = []
 
+
         for cell in row.findAll("td"):
             entry.append("".join(c for c in str(unicode(cell.string).encode('ascii', 'ignore')).strip() if c not in "*[]~"))
 
+        # Trade date as last column
+        entry.append(datetime.datetime.strftime(datetime.datetime.strptime(trade_date, '%d/%m/%Y'), '%Y-%m-%d'))
+
         # Filter
-        if len(entry) > 10 and "".join(entry):
+        if len(entry) > 11 and "".join(entry):
             entries.append(entry)
 
         # Ignore rest of the entries
@@ -59,7 +101,7 @@ def process_html_file(filename):
 
 """ Process transactions from Contract Notes
 """
-def process_entries(entries):
+def process_cn_entries(entries):
     print "Processing transactions..."
 
     is_data = False
@@ -75,12 +117,13 @@ def process_entries(entries):
 
     # New format?
     head = entries[0]
-    if len(head) == 13:
+    if len(head) == 14:
         is_new_html_format = True
 
     for entry in entries:
         scrap_entries = [ 'ISIN', 'BUY AVERAGE', 'SELL AVERAGE', 'NET AVERAGE', 'Delivery Total' ]
 
+        # Scrap unnecessary entries
         if any(item in "".join(entry) for item in scrap_entries):
             continue
 
@@ -116,7 +159,7 @@ def process_entries(entries):
                 if(float(item['Total']) < 0):
                     item['Total'] = str(abs(float(item['Total'])))
 
-                scrap_keys = COLUMNS[:4]
+                scrap_keys = COLUMNS[:3]
 
                 if is_new_html_format:
                     scrap_keys += [ 'Buy/Sell', 'Remarks' ]
@@ -142,7 +185,7 @@ def process_entries(entries):
                     if(float(next_item['Total']) < 0):
                         next_item['Total'] = str(abs(float(next_item['Total'])))
 
-                    scrap_keys = COLUMNS[:4]
+                    scrap_keys = COLUMNS[:3]
 
                     if is_new_html_format:
                         scrap_keys += [ 'Buy/Sell', 'Remarks' ]
@@ -166,7 +209,7 @@ def process_entries(entries):
                     is_data = False
 
                     # Cleanup
-                    scrap_keys = COLUMNS[:4]
+                    scrap_keys = COLUMNS[:3]
                     scrap_keys += [ 'STT SELL DELIVERY', 'STT BUY DELIVERY' ]
 
                     if is_new_html_format:
@@ -185,6 +228,7 @@ def process_entries(entries):
             if items:
                 is_misc = True
 
+        # Process MISC entries
         if is_misc:
             col = 11 if is_new_html_format else 13
             if not entry[col - 1] or is_new_html_format:
@@ -204,114 +248,97 @@ def process_entries(entries):
 
     return items
 
-""" Get current market price
+""" Crunch entries
 """
-def get_quote(symbol):
-    print "Getting market price: " + symbol
+def crunch_cn_entries(entries):
+    crunched_entries = []
 
-    base_url = 'http://finance.google.com/finance?q='
-
-    if symbol not in KEYWORDS:
-        print "Scrip information not available!"
-        return 0.0
-
-    symbol = KEYWORDS[symbol]
-
-    try:
-        response = urllib2.urlopen(base_url + symbol)
-        html = response.read()
-    except Exception, msg:
-        print msg
-        return 0.0
-
-    soup = BeautifulSoup(html)
-
-    try:
-        price = soup.find_all("span", id=re.compile('^ref_.*_l$'))[0].string
-        price = str(unicode(price).encode('ascii', 'ignore')).strip().replace(",", "")
-
-        return price
-    except Exception as e:
-        print "Can't get current rate for scrip: " + symbol
-        return 0.0
-
-""" Compile trades
-"""
-def compile_trades(data, trades):
-    print "Updating trades..."
-
-    for item in data:
-        if "Trades" in item:
-            compile_trades(item["Trades"], trades)
-            continue
-
-        if item["Type"] in ["BUY", "SELL"]:
-            scrip = item["Security"]
-
-            if scrip not in trades:
-                trades[scrip] = {
-                            "Buy": [],
-                            "Sell": []
-                        }
-
-            if item["Type"] == "BUY":
-                trades[scrip]["Buy"].append((float(item["Quantity"]), float(item["Total"])))
+    for entry in entries:
+        # Expand multiple trade entries
+        if "Trades" in entry:
+            crunched_entries.extend(entry["Trades"])
+        else:
+            if entry["Type"] == "MISC":
+                misc_entry = { key:value for key,value in entry.items() if key in ["Type", "Total"] }
+                crunched_entries.append(misc_entry)
             else:
-                trades[scrip]["Sell"].append((float(item["Quantity"]), float(item["Total"])))
+                crunched_entries.append(entry)
 
-        else:
-            if MISC_KEY not in trades:
-                trades[MISC_KEY] = {
-                            "Total Value": 0
-                        }
+    return crunched_entries
 
-            trades[MISC_KEY]["Total Value"] += float(item["Total"])
-
-""" Process Trades
+""" Crunch transactions
 """
-def process_trades(trades):
-    for key in dict(trades):
-        if key == MISC_KEY:
-            continue
+def crunch_transactions(entries):
+    crunched_entries = []
 
-        trades[key].update({
-                "Total Buy": 0,
-                "Total Sell": 0,
-                "Total Buy Value": 0,
-                "Total Sell Value": 0,
-                "Buy Rate": 0,
-                "Sell Rate": 0
-            })
+    misc_total = 0
 
-        for trade in trades[key]["Buy"]:
-            trades[key]["Total Buy"] += trade[0]
-            trades[key]["Total Buy Value"] += trade[1]
-            trades[key]["Buy Rate"] = trades[key]["Total Buy Value"] / trades[key]["Total Buy"]
-
-        del(trades[key]["Buy"])
-
-        for trade in trades[key]["Sell"]:
-            trades[key]["Total Sell"] += trade[0]
-            trades[key]["Total Sell Value"] += trade[1]
-            trades[key]["Sell Rate"] = trades[key]["Total Sell Value"] / trades[key]["Total Sell"]
-
-        del(trades[key]["Sell"])
-
-        # If old trades, ignore
-        if trades[key]["Total Buy"] == 0:
-            del trades[key]
-            continue
-
-        trades[key]["Balance"] = trades[key]["Total Buy"] - trades[key]["Total Sell"]
-
-        if trades[key]["Balance"] < 0:
-            # Missing BUY items, only calculate for accounted trades
-            trades[key]["Cleared"] = trades[key]["Sell Rate"] * trades[key]["Total Buy"] - trades[key]["Buy Rate"] * trades[key]["Total Buy"]
-        elif trades[key]["Balance"] == 0:
-            trades[key]["Cleared"] = trades[key]["Sell Rate"] * trades[key]["Total Sell"] - trades[key]["Buy Rate"] * trades[key]["Total Buy"]
+    for entry in entries:
+        if entry["Type"] == "MISC":
+            misc_total += entry["Total"]
         else:
-            # Only calculate for sold quantity
-            trades[key]["Cleared"] = trades[key]["Sell Rate"] * trades[key]["Total Sell"] - trades[key]["Buy Rate"] * trades[key]["Total Sell"]
+            if 'STT' in entry:
+                del(entry['STT'])
+            crunched_entries.append(entry)
+
+    crunched_entries = sorted(crunched_entries, key=lambda k: (k['Security'], k['Trade Date'], k['Type'], k['Trade Time']))
+
+    crunched_entries.append({"Type": "MISC", "Total": misc_total})
+
+    return crunched_entries
+
+""" Crunch trades
+"""
+def crunch_trades(transactions):
+    trades = {}
+
+    # Retreive and clean MISC
+    misc_total = transactions[-1]["Total"]
+    del(transactions[-1])
+
+    trades[MISC_KEY] = {
+            "Total Value": misc_total
+            }
+
+    for transaction in transactions:
+        scrip = transaction['Security']
+        quantity = float(transaction['Quantity'])
+        total = float(transaction["Total"])
+
+        # Blank entry
+        if scrip not in trades:
+            trades[scrip] = {
+                "Total Quantity": 0,
+                "Total Value": 0,
+                "Rate": 0,
+                "Cleared": 0
+            }
+
+
+        # BUY
+        if transaction['Type'] == 'BUY':
+            trades[scrip]['Total Quantity'] += quantity
+            trades[scrip]['Total Value'] += total
+            trades[scrip]['Rate'] = trades[scrip]['Total Value'] / trades[scrip]['Total Quantity']
+
+        else:
+            # Have shares?
+            if trades[scrip]['Total Quantity'] >= quantity:
+                # Calculate cleared value
+                trades[scrip]['Cleared'] += total - (quantity * trades[scrip]['Rate'])
+
+                # The difference is covered by Cleared. Rate remains the same.
+                trades[scrip]['Total Quantity'] -= quantity
+                trades[scrip]['Total Value'] = trades[scrip]['Total Quantity'] * trades[scrip]['Rate']
+
+        # Prune
+        if trades[scrip]['Total Quantity'] == 0:
+            if trades[scrip]['Cleared'] == 0:
+                del(trades[scrip])
+            else:
+                trades[scrip]['Rate'] = 0
+
+    return trades
 
 """ Update portfolio with trades
 """
@@ -323,64 +350,21 @@ def update_portfolio(trades, portfolio):
             continue
 
         portfolio[scrip] = {
-                    "Total Quantity": trades[scrip]["Balance"],
-                    "Total Value": trades[scrip]["Buy Rate"] * trades[scrip]["Balance"],
-                    "Average Rate": trades[scrip]["Buy Rate"],
-                    "Cleared": trades[scrip]["Cleared"]
+                "Total Quantity": trades[scrip]["Total Quantity"],
+                "Total Value": trades[scrip]["Total Value"],
+                "Average Rate": trades[scrip]["Rate"],
+                "Cleared": trades[scrip]["Cleared"]
                 }
-    """
 
-    for item in data:
-        if "Trades" in item:
-            update_portfolio(item["Trades"], portfolio)
-            continue
-
-        if item["Type"] in ["BUY", "SELL"]:
-            scrip = item["Security"]
-
-            if scrip not in portfolio:
-                portfolio[scrip] = {
-                            "Total Quantity": 0,
-                            "Total Value": 0,
-                            "Average Rate": 0,
-                        }
-
-            if item["Type"] == "BUY":
-                portfolio[scrip]["Total Quantity"] += float(item["Quantity"])
-                portfolio[scrip]["Total Value"] += float(item["Total"])
-            else:
-                portfolio[scrip]["Total Quantity"] -= float(item["Quantity"])
-                portfolio[scrip]["Total Value"] -= float(item["Total"])
-
-        else:
-            if MISC_KEY not in portfolio:
-                portfolio[MISC_KEY] = {
-                            "Total Value": 0
-                        }
-    """
-
-    portfolio[MISC_KEY] = {
-                "Total Value": 0
-            }
-    portfolio[MISC_KEY]["Total Value"] += trades[MISC_KEY]["Total Value"]
+    portfolio[MISC_KEY] = {"Total Value": trades[MISC_KEY]["Total Value"]}
 
 """ Create and update the portfolio
 """
 def generate_portfolio(transactions):
     print "Generating portfolio..."
 
-    trades = {}
-
-    for data in transactions:
-        compile_trades(data, trades)
-
-    process_trades(trades)
-
-    #system
-
     portfolio = {}
 
-    #for data in transactions:
     update_portfolio(trades, portfolio)
 
     report = process_portfolio(portfolio)
@@ -391,12 +375,13 @@ def generate_portfolio(transactions):
     tabular(portfolio)
 
     print "=" * 50
-    print " | TOTAL INVESTMENT : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['total'])), 'white') + " |"
-    print " | CURRENT VALUE    : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['current_value'])), 'yellow') + " |"
-    print " | ENTRY LOAD       : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['entry_load'])), 'cyan') + " |"
-    print " | EXIT LOAD        : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['exit_load'])), 'cyan') + " |"
-    print " | PROFIT/LOSS      : " + colored("{0:25}".format("Rs. {:,.2f} ( {:.2f}% )".format(report['balance'], percentage)), "red" if report['balance'] < 0 else "green") + " |"
-    print " | CLEARED          : " + colored("{0:25}".format("Rs. {:,.2f}".format(report['cleared'])), "red" if report['cleared'] < 0 else "green") + " |"
+    print " | TOTAL INVESTMENT : " + colored("{0:25}".format("₹ {:,.2f}".format(report['total'])), 'white') + " |"
+    print " | CURRENT VALUE    : " + colored("{0:25}".format("₹ {:,.2f}".format(report['current_value'])), 'yellow') + " |"
+    print " | ENTRY LOAD       : " + colored("{0:25}".format("₹ {:,.2f}".format(report['entry_load'])), 'cyan') + " |"
+    print " | EXIT LOAD        : " + colored("{0:25}".format("₹ {:,.2f}".format(report['exit_load'])), 'cyan') + " |"
+    print " | PROFIT/LOSS      : " + colored("{0:25}".format("₹ {:,.2f} ( {:.2f}% )".format(report['balance'], percentage)), "red" if report['balance'] < 0 else "green") + " |"
+    print " | CLEARED          : " + colored("{0:25}".format("₹ {:,.2f}".format(report['cleared'])), "red" if report['cleared'] < 0 else "green") + " |"
+    print " | BACKLOG          : " + colored("{0:25}".format("₹ {:,.2f}".format(BACKLOG)), 'red') + " |"
     print "=" * 50
 
 """ Report from portfolio
@@ -416,7 +401,7 @@ def process_portfolio(portfolio):
             balance -= portfolio[key]["Total Value"]
             portfolio[key]["Total Value"] = round(portfolio[key]["Total Value"], 2)
         else:
-            portfolio[key]["Market Rate"] = float(get_quote(key))
+            portfolio[key]["Market Rate"] = float(get_market_price(key))
 
             if portfolio[key]["Total Value"] > 0:
                 portfolio[key]["Current Value"] = portfolio[key]["Total Quantity"] * portfolio[key]["Market Rate"]
@@ -545,8 +530,15 @@ if __name__ == '__main__':
 
     # Parse HTML files
     for filename in glob.glob('*.htm'):
-        data = process_entries(process_html_file(filename))
+        cn_entries = crunch_cn_entries(process_cn_entries(parse_cn_file(filename)))
 
-        transactions.append(data)
+        transactions.extend(cn_entries)
 
-    generate_portfolio(transactions)
+    # Standardize transactions
+    transactions = crunch_transactions(transactions)
+
+    # Start eating them
+    trades = crunch_trades(transactions)
+
+    # Generate the porfolio
+    generate_portfolio(trades)
